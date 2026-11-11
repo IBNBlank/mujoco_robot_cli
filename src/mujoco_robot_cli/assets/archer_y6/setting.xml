@@ -1,0 +1,37 @@
+<mujocoinclude>
+    <contact>
+        <exclude body1="base_link" body2="link_1" />
+        <exclude body1="link_1" body2="link_2" />
+        <exclude body1="link_2" body2="link_3" />
+        <exclude body1="link_3" body2="link_4" />
+        <exclude body1="link_4" body2="link_5" />
+        <exclude body1="link_5" body2="grip_base_link" />
+        <exclude body1="grip_base_link" body2="grip_left_helper_link" />
+        <exclude body1="grip_left_helper_link" body2="grip_left_link_1" />
+        <exclude body1="grip_left_helper_link" body2="grip_left_link_2" />
+        <exclude body1="grip_left_link_1" body2="grip_left_link_2" />
+        <exclude body1="grip_base_link" body2="grip_right_helper_link" />
+        <exclude body1="grip_right_helper_link" body2="grip_right_link_1" />
+        <exclude body1="grip_right_helper_link" body2="grip_right_link_2" />
+        <exclude body1="grip_right_link_1" body2="grip_right_link_2" />
+    </contact>
+
+    <equality>
+        <joint joint1="grip_left_joint_1" joint2="grip_left_joint_2" />
+        <joint joint1="grip_left_joint_1" joint2="grip_left_help_joint" />
+        <joint joint1="grip_left_joint_1" joint2="grip_right_joint_1" />
+        <joint joint1="grip_left_joint_1" joint2="grip_right_joint_2" />
+        <joint joint1="grip_left_joint_1" joint2="grip_right_help_joint" />
+    </equality>
+
+    <actuator>
+        <position joint="joint_1" kp="2000" kv="80" ctrlrange="-2.8623 2.8623" forcerange="-28 28"/>
+        <position joint="joint_2" kp="2000" kv="80" ctrlrange="-1.57 2.09" forcerange="-28 28"/>
+        <position joint="joint_3" kp="2500" kv="80" ctrlrange="0 3.14" forcerange="-28 28"/>
+        <position joint="joint_4" kp="1000" kv="40" ctrlrange="-1.57 1.57" forcerange="-28 28"/>
+        <position joint="joint_5" kp="500" kv="20" ctrlrange="-1.57 1.57" forcerange="-8 8"/>
+        <position joint="joint_6" kp="500" kv="20" ctrlrange="-2.96 2.96" forcerange="-8 8"/>
+        <position joint="grip_left_joint_1" kp="200" kv="10" ctrlrange="0 1.52" forcerange="-8 8"/>
+    </actuator>
+
+</mujocoinclude>

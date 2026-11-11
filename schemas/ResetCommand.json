@@ -1,0 +1,25 @@
+{
+  "properties": {
+    "settle_s": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Settle S",
+      "type": "number"
+    },
+    "timeout_s": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timeout S"
+    }
+  },
+  "title": "ResetCommand",
+  "type": "object"
+}

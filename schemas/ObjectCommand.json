@@ -1,0 +1,54 @@
+{
+  "properties": {
+    "position": {
+      "items": {
+        "type": "number"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Position",
+      "type": "array"
+    },
+    "quaternion": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Quaternion"
+    },
+    "settle_s": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Settle S",
+      "type": "number"
+    },
+    "timeout_s": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timeout S"
+    }
+  },
+  "required": [
+    "position"
+  ],
+  "title": "ObjectCommand",
+  "type": "object"
+}

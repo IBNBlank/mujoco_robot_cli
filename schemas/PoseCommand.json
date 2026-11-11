@@ -1,0 +1,57 @@
+{
+  "properties": {
+    "position": {
+      "items": {
+        "type": "number"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Position",
+      "type": "array"
+    },
+    "quaternion": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Quaternion"
+    },
+    "frame": {
+      "default": "world",
+      "enum": [
+        "world",
+        "base"
+      ],
+      "title": "Frame",
+      "type": "string"
+    },
+    "timeout_s": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timeout S"
+    }
+  },
+  "required": [
+    "position"
+  ],
+  "title": "PoseCommand",
+  "type": "object"
+}

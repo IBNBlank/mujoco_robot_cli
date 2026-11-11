@@ -1,0 +1,17 @@
+<mujocoinclude>
+    <mesh name="arm_base_link" file="arm_base_link.STL"/>
+    <mesh name="arm_link_1" file="arm_link_1.STL"/>
+    <mesh name="arm_link_2" file="arm_link_2.STL"/>
+    <mesh name="arm_link_3" file="arm_link_3.STL"/>
+    <mesh name="arm_link_4" file="arm_link_4.STL"/>
+    <mesh name="arm_link_5" file="arm_link_5.STL"/>
+    <mesh name="grip_base_link" file="grip_base_link.STL"/>
+    <mesh name="grip_left_helper_link" file="grip_left_helper_link.STL"/>
+    <mesh name="grip_left_link_1" file="grip_left_link_1.STL"/>
+    <mesh name="grip_left_link_2" file="grip_left_link_2.STL"/>
+    <mesh name="grip_right_helper_link" file="grip_right_helper_link.STL"/>
+    <mesh name="grip_right_link_1" file="grip_right_link_1.STL"/>
+    <mesh name="grip_right_link_2" file="grip_right_link_2.STL"/>
+    <mesh name="camera_link" file="camera_link.STL"/>
+    <mesh name="table_link" file="table_link.STL" scale="0.001 0.001 0.001"/>
+</mujocoinclude>

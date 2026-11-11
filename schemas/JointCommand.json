@@ -1,0 +1,31 @@
+{
+  "properties": {
+    "positions": {
+      "items": {
+        "type": "number"
+      },
+      "maxItems": 6,
+      "minItems": 6,
+      "title": "Positions",
+      "type": "array"
+    },
+    "timeout_s": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timeout S"
+    }
+  },
+  "required": [
+    "positions"
+  ],
+  "title": "JointCommand",
+  "type": "object"
+}

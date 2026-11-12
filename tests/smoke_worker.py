@@ -13,7 +13,7 @@ def main() -> None:
         print("steps_per_0.5s", worker.latest()["step"] - before)
         for kind, payload, timeout in (
             ("joints", {"positions": [0.2, -0.4, 0.8, -0.4, 0.2, 0.1]}, 8),
-            ("pose", {"position": [0.4, 0, 0.5], "quaternion": [1, 0, 0, 0], "frame": "world"}, 8),
+            ("pose", {"position": [0.4, 0, 0.25], "quaternion": [1, 0, 0, 0], "frame": "base"}, 8),
             ("gripper", {"action": "open"}, 8),
             ("object", {"position": [0.5, 0, 0.36], "settle_s": 0.2}, 5),
             ("reset", {"settle_s": 0.1}, 5),

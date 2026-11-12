@@ -23,8 +23,8 @@ def main():
             obj = np.array(snap["object"]["position"])
             quat = [float(np.cos(np.pi/8)), 0., float(np.sin(np.pi/8)), 0.]
             grasp = obj + rotate_vector(np.array(quat), np.array([.015, 0, .0016]))
-            for position in ([grasp[0], grasp[1], .44252477], grasp.tolist()):
-                result = worker.submit("pose", {"position": position, "quaternion": quat, "frame": "world"}, 20)
+            for position in ([grasp[0], grasp[1], .19252477], grasp.tolist()):
+                result = worker.submit("pose", {"position": position, "quaternion": quat, "frame": "base"}, 20)
                 if result.get("status") != "reached":
                     raise RuntimeError(result)
             samples = []

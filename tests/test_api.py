@@ -1,3 +1,5 @@
+import base64
+import io
 import json
 import threading
 import time
@@ -74,18 +76,52 @@ def test_queries_actions_and_errors(server):
     assert httpx.get(f"{server}/v1/camera/image?camera=unknown", timeout=5).status_code == 422
     invalid = httpx.post(f"{server}/v1/arm/joints", json={"positions": [9, 0, 0, 0, 0, 0]}, timeout=5)
     assert invalid.status_code == 422 and invalid.json()["error"]["code"] == "INVALID_ARGUMENT"
-    blocked = httpx.post(f"{server}/v1/object/pose", json={"position": [0.5, 0, 0.1]}, timeout=5)
+    blocked = httpx.post(f"{server}/v1/object/pose", json={"position": [0.5, 0, -0.15]}, timeout=5)
     assert blocked.status_code == 422
     pose = httpx.get(f"{server}/v1/object/pose", timeout=5)
     assert pose.status_code == 200 and len(pose.json()["data"]["position"]) == 3
     outside = httpx.get(f"{server}/v1/object/in-target", timeout=5)
     assert outside.json()["data"]["in_target"] is False
-    placed = httpx.post(f"{server}/v1/object/pose", json={"position": [0.6, 0.0, 0.32], "settle_s": 0.05}, timeout=10)
+    placed = httpx.post(f"{server}/v1/object/pose", json={"position": [0.6, 0.0, 0.07], "settle_s": 0.05}, timeout=10)
     assert placed.status_code == 200
     inside = httpx.get(f"{server}/v1/object/in-target", timeout=5)
     assert inside.json()["data"]["in_target"] is True
     reset = httpx.post(f"{server}/v1/environment/reset", json={"settle_s": 0.05}, timeout=10)
     assert reset.status_code == 200
+
+
+def test_tcp_delta_motion_and_pixel_point(server):
+    import numpy as np
+    from PIL import Image
+    from mujoco_robot_cli.simulation.scene import local_delta_pose, quaternion_error
+
+    with httpx.Client(base_url=server, timeout=20) as client:
+        moved = client.post("/v1/arm/joints", json={"positions": [.1, -.4, .8, -.4, .1, .05], "timeout_s": 10})
+        assert moved.status_code == 200, moved.text
+        before = client.get("/v1/arm/pose").json()["data"]
+        delta = {"delta_position": [.005, 0, 0], "delta_rpy": [0, .01, 0], "timeout_s": 10}
+        expected = local_delta_pose(np.array(before["position"]), np.array(before["quaternion"]), delta["delta_position"], delta["delta_rpy"])
+        result = client.post("/v1/arm/pose/delta", json=delta)
+        assert result.status_code == 200, result.text
+        assert result.json()["data"]["result"]["status"] == "reached", result.text
+        state = result.json()["data"]["state"]
+        assert state["pose"]["frame"] == state["object"]["frame"] == "base"
+        after = client.get("/v1/arm/pose").json()["data"]
+        assert np.linalg.norm(np.array(after["position"]) - expected[0]) < .003
+        assert quaternion_error(np.array(after["quaternion"]), expected[1]) < .03
+        depth_frame = client.get("/v1/camera/image", params={"camera": "left_rear", "type": "depth"})
+        depth_image = np.array(Image.open(io.BytesIO(depth_frame.content)))
+        v, u = map(int, np.argwhere(depth_image > 0)[0])
+        capture = {key: json.loads(base64.urlsafe_b64decode(depth_frame.headers[header])) for header, key in (
+            ("x-tcp-position-base", "tcp_position_base"), ("x-tcp-quaternion-base", "tcp_quaternion_base"),
+            ("x-camera-position-tcp", "camera_position_tcp"), ("x-camera-rotation-tcp", "camera_rotation_tcp"),
+            ("x-intrinsics", "intrinsics"))}
+        point = client.post("/v1/camera/point", json={
+            "camera": "left_rear", "pixel": [u, v], "depth_m": float(depth_image[v, u]) / 1000,
+            **capture, "epoch": int(depth_frame.headers["x-epoch"]), "step": int(depth_frame.headers["x-step"]),
+        })
+        assert point.status_code == 200, point.text
+        assert point.json()["data"]["frame"] == "base"
 
 
 def test_cli_disconnected_server():

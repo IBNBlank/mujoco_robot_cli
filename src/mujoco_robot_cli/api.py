@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import base64
 import io
+import json
 import time
 from uuid import uuid4
 
@@ -11,8 +13,8 @@ from fastapi.responses import JSONResponse, Response
 from PIL import Image
 
 from .config import Settings
-from .schemas import Envelope, ErrorBody, GripperCommand, JointCommand, ObjectCommand, PoseCommand, ResetCommand
-from .simulation.scene import CAMERAS
+from .schemas import DeltaPoseCommand, Envelope, ErrorBody, GripperCommand, JointCommand, ObjectCommand, PixelPointCommand, PoseCommand, ResetCommand
+from .simulation.scene import CAMERAS, pixel_to_base_from_capture
 from .simulation.worker import WorkerClient
 
 
@@ -67,7 +69,7 @@ def create_app(settings: Settings, worker: WorkerClient | None = None) -> FastAP
 
     @app.get("/v1/capabilities")
     def capabilities(request: Request):
-        return ok(request, settings.model_dump() | {"protocol": "0.1.0", "robot": "archer_y6", "tcp": "ee_frame", "quaternion": "wxyz", "cameras": list(CAMERAS)})
+        return ok(request, settings.model_dump() | {"protocol": "0.1.0", "robot": "archer_y6", "tcp": "ee_frame", "quaternion": "wxyz", "pose_frame": "base", "base_link": "base_link", "delta_frame": "tcp", "cameras": list(CAMERAS)})
 
     @app.get("/v1/arm/joints")
     def get_joints(request: Request):
@@ -79,17 +81,19 @@ def create_app(settings: Settings, worker: WorkerClient | None = None) -> FastAP
         return action(app, request, "joints", command.model_dump(), command.timeout_s)
 
     @app.get("/v1/arm/pose")
-    def get_pose(request: Request, frame: str = "world"):
+    def get_pose(request: Request, frame: str = "base"):
+        if frame != "base":
+            raise ServiceError("INVALID_ARGUMENT", "pose frame must be base", 422)
         snap = fresh(app.state.worker, settings)
-        if frame not in {"world", "base"}:
-            raise ServiceError("INVALID_ARGUMENT", "unsupported frame", 422)
-        from .simulation.scene import transform
-        position, quaternion = transform(np.array(snap["pose"]["position"]), np.array(snap["pose"]["quaternion"]), "world", frame, np.array(snap["pose"]["base_position"]), np.array(snap["pose"]["base_quaternion"]))
-        return ok(request, {"frame": frame, "position": position.tolist(), "quaternion": quaternion.tolist()} | meta(snap))
+        return ok(request, snap["pose"] | meta(snap))
 
     @app.post("/v1/arm/pose")
     def set_pose(command: PoseCommand, request: Request):
         return action(app, request, "pose", command.model_dump(), command.timeout_s)
+
+    @app.post("/v1/arm/pose/delta")
+    def delta_pose(command: DeltaPoseCommand, request: Request):
+        return action(app, request, "pose_delta", command.model_dump(), command.timeout_s)
 
     @app.get("/v1/gripper")
     def get_gripper(request: Request):
@@ -101,7 +105,9 @@ def create_app(settings: Settings, worker: WorkerClient | None = None) -> FastAP
         return action(app, request, "gripper", command.model_dump(), command.timeout_s)
 
     @app.get("/v1/object/pose")
-    def get_object(request: Request):
+    def get_object(request: Request, frame: str = "base"):
+        if frame != "base":
+            raise ServiceError("INVALID_ARGUMENT", "pose frame must be base", 422)
         snap = fresh(app.state.worker, settings)
         return ok(request, object_view(snap) | meta(snap))
 
@@ -109,7 +115,7 @@ def create_app(settings: Settings, worker: WorkerClient | None = None) -> FastAP
     def object_in_target(request: Request):
         snap = fresh(app.state.worker, settings)
         view = object_view(snap)
-        return ok(request, {"in_target": view["in_target"], "position": view["position"], "target": view["target"]} | meta(snap))
+        return ok(request, {"frame": "base", "in_target": view["in_target"], "position": view["position"], "target": view["target"]} | meta(snap))
 
     @app.post("/v1/object/pose")
     def set_object(command: ObjectCommand, request: Request):
@@ -119,19 +125,62 @@ def create_app(settings: Settings, worker: WorkerClient | None = None) -> FastAP
     def reset(command: ResetCommand, request: Request):
         return action(app, request, "reset", command.model_dump(), command.timeout_s)
 
-    @app.get("/v1/camera/image")
-    def image(camera: str = "end", type: str = "rgb"):
+    def camera_image(camera: str):
         if camera not in CAMERAS:
             raise ServiceError("INVALID_ARGUMENT", f"camera must be one of: {', '.join(CAMERAS)}", 422)
-        if type not in {"rgb", "depth"}:
-            raise ServiceError("INVALID_ARGUMENT", "type must be rgb or depth", 422)
         image = app.state.worker.latest_image(camera)
         if image is None or time.monotonic() - image["monotonic_s"] > settings.freshness_s:
             raise ServiceError("NOT_READY", "image is stale", 503)
+        return image
+
+    @app.post("/v1/camera/point")
+    def camera_point(command: PixelPointCommand, request: Request):
+        if command.camera not in CAMERAS:
+            raise ServiceError("INVALID_ARGUMENT", "unsupported camera", 422)
+        payload = command.model_dump()
+        source = payload
+        if command.intrinsics is None:
+            image = camera_image(command.camera)
+            source = image
+            payload.update({key: image[key] for key in ("camera_position_tcp", "camera_rotation_tcp", "intrinsics")})
+            if command.camera == "left_rear":
+                # Its transform relative to TCP changes as the arm moves. Use the
+                # matching capture pose to recover the fixed camera's base pose.
+                payload.update({key: image[key] for key in ("tcp_position_base", "tcp_quaternion_base")})
+            elif command.tcp_position_base is None:
+                source = fresh(app.state.worker, settings)
+                if source["epoch"] != image["epoch"]:
+                    raise ServiceError("NOT_READY", "camera calibration is from a previous epoch", 503)
+                payload["tcp_position_base"] = source["pose"]["position"]
+                payload["tcp_quaternion_base"] = source["pose"]["quaternion"]
+        try:
+            position = pixel_to_base_from_capture(payload["pixel"], payload["depth_m"],
+                                                   payload["tcp_position_base"], payload["tcp_quaternion_base"],
+                                                   payload["camera_position_tcp"], payload["camera_rotation_tcp"],
+                                                   payload["intrinsics"])
+        except ValueError as exc:
+            raise ServiceError("INVALID_ARGUMENT", str(exc), 422) from exc
+        return ok(request, {"frame": "base", "position": position.tolist(), "camera": command.camera,
+                            "pixel": command.pixel, "depth_m": command.depth_m,
+                            "epoch": command.epoch if command.epoch is not None else source.get("epoch"),
+                            "step": command.step if command.step is not None else source.get("step")})
+
+    @app.get("/v1/camera/image")
+    def image(camera: str = "end", type: str = "rgb"):
+        image = camera_image(camera)
+        if type not in {"rgb", "depth"}:
+            raise ServiceError("INVALID_ARGUMENT", "type must be rgb or depth", 422)
         array = image[type]
         output = io.BytesIO()
         Image.fromarray(array).save(output, format="PNG")
-        return Response(output.getvalue(), media_type="image/png", headers={"x-epoch": str(image["epoch"]), "x-step": str(image["step"]), "x-captured-at-ns": str(image["captured_at_ns"]), "x-width": str(image["width"]), "x-height": str(image["height"])})
+        headers = {"x-epoch": str(image["epoch"]), "x-step": str(image["step"]),
+                   "x-captured-at-ns": str(image["captured_at_ns"]), "x-width": str(image["width"]), "x-height": str(image["height"]),
+                   "x-tcp-position-base": base64.urlsafe_b64encode(json.dumps(image["tcp_position_base"], separators=(",", ":")).encode()).decode(),
+                   "x-tcp-quaternion-base": base64.urlsafe_b64encode(json.dumps(image["tcp_quaternion_base"], separators=(",", ":")).encode()).decode(),
+                   "x-camera-position-tcp": base64.urlsafe_b64encode(json.dumps(image["camera_position_tcp"], separators=(",", ":")).encode()).decode(),
+                   "x-camera-rotation-tcp": base64.urlsafe_b64encode(json.dumps(image["camera_rotation_tcp"], separators=(",", ":")).encode()).decode(),
+                   "x-intrinsics": base64.urlsafe_b64encode(json.dumps(image["intrinsics"], separators=(",", ":")).encode()).decode()}
+        return Response(output.getvalue(), media_type="image/png", headers=headers)
 
     return app
 
@@ -150,11 +199,7 @@ def meta(snap: dict) -> dict:
 
 
 def object_view(snap: dict) -> dict:
-    position = snap["object"]["position"]
-    target = {"center": [0.6, 0.0, 0.301], "half_size": [0.04, 0.04, 0.001]}
-    inside_xy = all(abs(position[index] - target["center"][index]) <= target["half_size"][index] + 0.02 for index in (0, 1))
-    on_table = abs(position[2] - 0.322) <= 0.015
-    return snap["object"] | {"in_target": inside_xy and on_table, "target": target}
+    return snap["object"].copy()
 
 
 def gripper_view(snap: dict) -> dict:

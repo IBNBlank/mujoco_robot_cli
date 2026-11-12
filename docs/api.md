@@ -8,17 +8,21 @@
 
 失败时 `ok=false`，`error.code` 为 `INVALID_ARGUMENT`、`BUSY`、`IK_FAILED`、`TIMEOUT`、`NOT_READY`、`CAMERA_DISABLED` 或 `INTERNAL_ERROR`。
 
+所有对外绝对 pose（机械臂、物块、动作返回的 state、目标区位置）均以机械臂 `base_link` 为基准，`frame="base"`，位置单位米、角度单位弧度、四元数顺序 wxyz。`world` 输入返回参数错误。默认场景的 base 在 world `[0,0,0.25]`，因此旧 world 位置迁移到 base 时 Z 减 0.25；实现使用实际基座变换，也支持基座旋转。
+
 ## HTTP
 
 - `POST /v1/arm/joints`：`{"positions":[6个弧度],"timeout_s":15}`
 - `GET /v1/arm/joints`
-- `POST /v1/arm/pose`：`{"position":[x,y,z],"quaternion":[w,x,y,z],"frame":"world"}`；省略姿态时保持当前姿态。
-- `GET /v1/arm/pose?frame=world|base`
+- `POST /v1/arm/pose`：`{"position":[x,y,z],"quaternion":[w,x,y,z],"frame":"base"}`；frame 可省略；省略姿态时保持当前姿态。
+- `GET /v1/arm/pose`：返回 base 下的 TCP 实测位姿，仅接受 `frame=base`。
+- `POST /v1/arm/pose/delta`：`{"delta_position":[dx,dy,dz],"delta_rpy":[roll,pitch,yaw],"timeout_s":15}`；两项增量默认均为零。以仿真线程开始执行时的 TCP 坐标系为基准：+X 前进，绕 +X/+Y/+Z 分别为 roll/pitch/yaw，按右手规则，角度单位弧度。目标为 `T_base_tcp × Trans(delta_position) × Rz(yaw) × Ry(pitch) × Rx(roll)`；平移按开始时的朝向计算，旋转局部右乘。每次调用执行一次相对移动，连续调用可实现类似飞机/底盘的自身坐标系操控。到位、阻塞、IK 失败、超时语义与绝对 pose 一致。
 - `POST /v1/gripper`：`{"action":"open"}`、`{"action":"close"}` 或 `{"opening_ratio":0.5}`。
 - `GET /v1/gripper`
 - `GET /v1/camera/image?camera=end|left_rear&type=rgb|depth`：手部或固定左后方相机，成功返回 PNG；深度为 uint16 毫米。省略 camera 时使用手部相机。
-- `POST /v1/object/pose`：设置红色物块的世界坐标和可选姿态。
-- `GET /v1/object/pose`：查询红色物块的世界位置和姿态。
+- `POST /v1/camera/point`：最简请求为 `{"camera":"end","pixel":[u,v],"depth_m":z}`，相机必填；相机内参和外参由服务器读取。省略末端位姿时，`end` 使用当前 TCP 位姿计算，`left_rear` 使用固定相机位姿计算。可同时传入 `tcp_position_base` 和 `tcp_quaternion_base` 指定计算所用的末端位姿。需按特定图像帧精确反投影时，仍可传入该帧响应头提供的完整采集元数据（末端采集位姿、相机相对 TCP 外参和内参），此时不读取当前位姿或相机帧。返回 `base_link` 下 XYZ（米）。
+- `POST /v1/object/pose`：设置红色物块的 base 坐标和可选姿态，仅支持 `frame="base"`（可省略）。
+- `GET /v1/object/pose`：查询红色物块的 base 位置和姿态。
 - `GET /v1/object/in-target`：查询物块中心是否位于绿色目标区水平范围内，并已落在桌面高度。
 - `POST /v1/environment/reset`
 - `GET /healthz`、`GET /readyz`、`GET /v1/capabilities`
@@ -32,14 +36,16 @@
 ```bash
 mujoco_server --config configs/default.yaml --headless
 mujoco_cli joints set --positions 0.1 -0.2 0.4 -0.2 0.1 0.05 --timeout 15
-mujoco_cli pose get --frame world
+mujoco_cli pose get
+mujoco_cli pose delta --delta-position 0.01 0 0 --delta-rpy 0 0 0.1
+mujoco_cli image point --camera end --pixel 112 112
 mujoco_cli gripper open
 mujoco_cli image get --type rgb --output artifacts/end.png
 mujoco_cli image get --camera left_rear --type rgb --output artifacts/left_rear.png
 mujoco_cli image get --camera left_rear --type depth --output artifacts/left_rear_depth.png
 mujoco_cli object get
 mujoco_cli object in-target
-mujoco_cli object set --position 0.5 0 0.36 --settle 0.2
+mujoco_cli object set --position 0.5 0 0.11 --settle 0.2
 mujoco_cli environment reset
 python scripts/request.py joints get
 ```

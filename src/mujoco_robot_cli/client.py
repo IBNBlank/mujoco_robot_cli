@@ -40,7 +40,7 @@ class RobotClient:
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_bytes(response["content"])
         temporary.replace(path)
-        return {"path": str(path.resolve()), "bytes": len(response["content"]), "headers": {key: response["headers"].get(key) for key in ("x-epoch", "x-step", "x-width", "x-height", "content-type")}}
+        return {"path": str(path.resolve()), "bytes": len(response["content"]), "headers": {key: response["headers"].get(key) for key in ("x-epoch", "x-step", "x-width", "x-height", "x-captured-at-ns", "x-tcp-position-base", "x-tcp-quaternion-base", "x-camera-position-tcp", "x-camera-rotation-tcp", "x-intrinsics", "content-type")}}
 
 
 class ClientFailure(Exception):

@@ -13,7 +13,7 @@ from mujoco_robot_cli.client import ClientFailure, RobotClient
 from mujoco_robot_cli.simulation.scene import rotate_vector
 import numpy as np
 
-# TCP +X is the approach direction: world +X/-Z at 45 degrees.
+# TCP +X is the approach direction: base +X/-Z at 45 degrees.
 GRASP_QUATERNION = [float(np.cos(np.pi / 8)), 0.0, float(np.sin(np.pi / 8)), 0.0]
 
 
@@ -38,7 +38,7 @@ def run(client: RobotClient, *, target: list[float], grasp_offset: list[float],
     def move(position: list[float]) -> None:
         client.request("POST", "/v1/arm/pose", {
             "position": position, "quaternion": GRASP_QUATERNION,
-            "frame": "world", "timeout_s": timeout_s,
+            "frame": "base", "timeout_s": timeout_s,
         })
 
     print("1/7 open gripper", flush=True)
@@ -47,11 +47,11 @@ def run(client: RobotClient, *, target: list[float], grasp_offset: list[float],
     obj = client.request("GET", "/v1/object/pose")["data"]["position"]
     # Offset is expressed in TCP axes, so it rotates with the grasp orientation.
     rotation = np.asarray(GRASP_QUATERNION)
-    offset_world = rotate_vector(rotation, np.asarray(grasp_offset, dtype=float))
-    grasp = (np.asarray(obj) + offset_world).tolist()
-    release = (np.asarray(target) + offset_world).tolist()
+    offset_base = rotate_vector(rotation, np.asarray(grasp_offset, dtype=float))
+    grasp = (np.asarray(obj) + offset_base).tolist()
+    release = (np.asarray(target) + offset_base).tolist()
     travel_z = max(grasp[2], release[2]) + clearance
-    print("fixed grasp orientation wxyz", GRASP_QUATERNION, "TCP offset world", offset_world.tolist(), flush=True)
+    print("fixed grasp orientation wxyz", GRASP_QUATERNION, "TCP offset base", offset_base.tolist(), flush=True)
     print("3/7 approach object", grasp, flush=True)
     move([grasp[0], grasp[1], travel_z])
     move(grasp)
@@ -84,7 +84,7 @@ def run(client: RobotClient, *, target: list[float], grasp_offset: list[float],
     check = client.request("GET", "/v1/object/in-target")["data"]
     final = client.request("GET", "/v1/object/pose")["data"]
     # Require table height as well: the current privileged API also accepts boxes in the air.
-    if not check["in_target"] or abs(final["position"][2] - 0.322) > 0.015:
+    if not check["in_target"] or abs(final["position"][2] - check["target"]["center"][2] - 0.021) > 0.015:
         raise DemoError(f"box is not resting in target: {final['position']}")
     return {"ok": True, "object": final, "in_target": True}
 
@@ -93,7 +93,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", default="http://127.0.0.1:8000")
     parser.add_argument("--timeout", type=float, default=20)
-    parser.add_argument("--target", nargs=3, type=float, default=[0.6, 0.0, 0.332], help="desired box centre at release, world metres")
+    parser.add_argument("--target", nargs=3, type=float, default=[0.6, 0.0, 0.082], help="desired box centre at release, base link metres")
     parser.add_argument("--grasp-offset", nargs=3, type=float, default=[0.015, 0.0, 0.0016], help="object-centre to TCP vector expressed in TCP axes (metres)")
     parser.add_argument("--clearance", type=float, default=0.12)
     args = parser.parse_args()

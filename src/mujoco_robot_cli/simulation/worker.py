@@ -27,6 +27,7 @@ from .scene import (
     actuator_id,
     joint_address,
     name_id,
+    local_delta_pose,
     normalize_quaternion,
     pose_of,
     scene_path,
@@ -97,6 +98,8 @@ class Simulation:
 
     def start(self) -> None:
         self.reset_state()
+        # Multisample depth resolves at a subpixel sample, which biases pixel unprojection.
+        self.model.vis.quality.offsamples = 0
         self.renderer = mujoco.Renderer(self.model, self.settings.image_height, self.settings.image_width)
         self.depth_renderer = mujoco.Renderer(self.model, self.settings.image_height, self.settings.image_width)
         self.depth_renderer.enable_depth_rendering()
@@ -179,11 +182,17 @@ class Simulation:
                 if np.any((target < self.limits[:, 0]) | (target > self.limits[:, 1])):
                     raise ValueError("joint target exceeds limits")
                 self.controller.motion = Motion("joints", target, deadline=command.deadline, operation_id=command.operation_id)
-            elif command.kind == "pose":
-                quat = None if command.payload.get("quaternion") is None else normalize_quaternion(command.payload["quaternion"])
-                if quat is None:
-                    _, quat = self.tcp_pose(command.payload["frame"])
-                motion = Motion("pose", np.asarray(command.payload["position"], dtype=float), quat, command.payload["frame"], command.deadline, operation_id=command.operation_id)
+            elif command.kind in {"pose", "pose_delta"}:
+                if command.kind == "pose_delta":
+                    target, quat = local_delta_pose(*self.tcp_pose("base"), command.payload["delta_position"], command.payload["delta_rpy"])
+                else:
+                    if command.payload.get("frame", "base") != "base":
+                        raise ValueError("pose frame must be base")
+                    target = np.asarray(command.payload["position"], dtype=float)
+                    quat = self.tcp_pose("base")[1] if command.payload.get("quaternion") is None else normalize_quaternion(command.payload["quaternion"])
+                if target.shape != (3,) or not np.all(np.isfinite(target)):
+                    raise ValueError("position must contain three finite values")
+                motion = Motion("pose", target, quat, "base", command.deadline, operation_id=command.operation_id)
                 position, orientation = transform(motion.target, quat, motion.frame, "world", *self.base_pose())
                 solved = solve_pose(self.model, self.data, self.arm_q, self.arm_v, self.tcp, self.limits, position, orientation, self.joints())
                 if solved is None:
@@ -209,10 +218,14 @@ class Simulation:
             results.put({"ok": False, "code": code, "message": str(exc), "operation_id": command.operation_id})
 
     def _set_object(self, payload: dict) -> None:
-        position = np.asarray(payload["position"], dtype=float)
+        if payload.get("frame", "base") != "base":
+            raise ValueError("object frame must be base")
+        quat = normalize_quaternion(payload.get("quaternion") or [1, 0, 0, 0])
+        position, quat = transform(np.asarray(payload["position"], dtype=float), quat, "base", "world", *self.base_pose())
+        if not np.all(np.isfinite(position)):
+            raise ValueError("position must contain three finite values")
         if position[2] < self.settings.table_z + 0.02 - self.settings.object_clearance:
             raise ValueError("object penetrates the table")
-        quat = normalize_quaternion(payload.get("quaternion") or [1, 0, 0, 0])
         self.data.qpos[self.object_q:self.object_q + 3] = position
         self.data.qpos[self.object_q + 3:self.object_q + 7] = quat
         self.data.qvel[self.object_v:self.object_v + 6] = 0
@@ -226,9 +239,15 @@ class Simulation:
         results.put({"ok": False, "code": "TIMEOUT", "message": "request deadline reached", "operation_id": operation_id})
 
     def snapshot(self, now: float) -> dict:
-        pos, quat = self.tcp_pose()
+        pos, quat = self.tcp_pose("base")
         base_pos, base_quat = self.base_pose()
         obj = self.data.qpos[self.object_q:self.object_q + 7].copy()
+        obj_pos, obj_quat = transform(obj[:3], obj[3:], "world", "base", base_pos, base_quat)
+        target_id = name_id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "tar_plane")
+        target_pos, target_quat = transform(self.data.geom_xpos[target_id], np.array([1., 0, 0, 0]), "world", "base", base_pos, base_quat)
+        target_half_size = self.model.geom_size[target_id].copy()
+        inside_xy = np.all(np.abs(obj[:2] - self.data.geom_xpos[target_id, :2]) <= target_half_size[:2] + 0.02)
+        on_table = abs(obj[2] - (self.settings.table_z + 0.022)) <= 0.015
         ratio = (self.grip_limit[1] - self.data.qpos[self.grip_q]) / (self.grip_limit[1] - self.grip_limit[0])
 
         moving = abs(self.gripper_velocity()) > self.settings.velocity_tolerance
@@ -239,20 +258,40 @@ class Simulation:
             "captured_at_ns": time.time_ns(),
             "monotonic_s": now,
             "joints": {"names": JOINT_NAMES, "positions": self.joints().tolist(), "velocities": self.joint_velocity().tolist(), "limits": self.limits.tolist()},
-            "pose": {"frame": "world", "position": pos.tolist(), "quaternion": quat.tolist(), "base_position": base_pos.tolist(), "base_quaternion": base_quat.tolist()},
+            "pose": {"frame": "base", "position": pos.tolist(), "quaternion": quat.tolist()},
             "gripper": {"raw_position": float(self.data.qpos[self.grip_q]), "opening_ratio": float(np.clip(ratio, 0, 1)), "target": self.controller.hold_grip, "velocity": self.gripper_velocity(), "moving": moving},
-            "object": {"position": obj[:3].tolist(), "quaternion": obj[3:].tolist()},
+            "object": {"frame": "base", "position": obj_pos.tolist(), "quaternion": obj_quat.tolist(), "in_target": bool(inside_xy and on_table), "target": {"frame": "base", "center": target_pos.tolist(), "quaternion": target_quat.tolist(), "half_size": target_half_size.tolist()}},
         }
 
     def image(self, now: float) -> dict:
         frames = {}
+        tcp_position_base, tcp_quaternion_base = self.tcp_pose("base")
+        tcp_position_world, _ = pose_of(self.data, self.tcp)
+        tcp_rotation_world = self.data.xmat[self.tcp].reshape(3, 3)
         for camera, model_name in CAMERAS.items():
             captured = time.monotonic()
+            captured_at_ns = time.time_ns()
             self.renderer.update_scene(self.data, model_name)
             rgb = self.renderer.render().copy()
             self.depth_renderer.update_scene(self.data, model_name)
-            depth = np.clip(self.depth_renderer.render() * 1000.0, 0, 65535).astype(np.uint16)
-            frames[camera] = {"camera": camera, "epoch": self.epoch, "step": int(self.data.time / self.model.opt.timestep), "captured_at_ns": time.time_ns(), "monotonic_s": captured, "rgb": rgb, "depth": depth, "width": rgb.shape[1], "height": rgb.shape[0]}
+            depth_m = self.depth_renderer.render().copy()
+            near = self.model.vis.map.znear * self.model.stat.extent
+            far = self.model.vis.map.zfar * self.model.stat.extent
+            valid = np.isfinite(depth_m) & (depth_m > near) & (depth_m < far * (1 - 1e-6)) & (depth_m < 65.535)
+            depth = np.where(valid, np.clip(depth_m * 1000.0, 0, 65534), 0).astype(np.uint16)
+            camera_id = name_id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, model_name)
+            base_rotation = self.data.xmat[self.base].reshape(3, 3)
+            camera_position = base_rotation.T @ (self.data.cam_xpos[camera_id] - self.data.xpos[self.base])
+            camera_rotation = base_rotation.T @ self.data.cam_xmat[camera_id].reshape(3, 3)
+            height, width = depth.shape
+            focal = height / (2 * np.tan(np.deg2rad(self.model.cam_fovy[camera_id]) / 2))
+            camera_position_tcp = tcp_rotation_world.T @ (self.data.cam_xpos[camera_id] - tcp_position_world)
+            camera_rotation_tcp = tcp_rotation_world.T @ self.data.cam_xmat[camera_id].reshape(3, 3)
+            frames[camera] = {"camera": camera, "epoch": self.epoch, "step": int(self.data.time / self.model.opt.timestep), "captured_at_ns": captured_at_ns, "monotonic_s": captured, "rgb": rgb, "depth": depth, "width": width, "height": height,
+                              "tcp_position_base": tcp_position_base.tolist(), "tcp_quaternion_base": tcp_quaternion_base.tolist(),
+                              "camera_position_tcp": camera_position_tcp.tolist(), "camera_rotation_tcp": camera_rotation_tcp.tolist(),
+                              "intrinsics": {"fx": float(focal), "fy": float(focal), "cx": (width - 1) / 2, "cy": (height - 1) / 2, "width": width, "height": height},
+                              "camera_position_base": camera_position.tolist(), "camera_rotation_base": camera_rotation.tolist()}
         return frames
 
 

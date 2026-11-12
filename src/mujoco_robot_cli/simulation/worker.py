@@ -22,7 +22,7 @@ from .scene import (
     GRIPPER_JOINT,
     GRIPPER_RATIO,
     JOINT_NAMES,
-    OBJECT_JOINT,
+    OBJECT_JOINTS,
     TCP_BODY,
     actuator_id,
     joint_address,
@@ -79,7 +79,8 @@ class Simulation:
         self.arm_v = [joint_address(self.model, name)[1] for name in JOINT_NAMES]
         self.grip_q, self.grip_v = joint_address(self.model, GRIPPER_JOINT)
         self.grip_followers = [joint_address(self.model, name)[0] for name in ("grip_left_joint_2", "grip_right_joint_1", "grip_right_joint_2", "grip_left_help_joint", "grip_right_help_joint")]
-        self.object_q, self.object_v = joint_address(self.model, OBJECT_JOINT)
+        self.object_addresses = {object_id: joint_address(self.model, joint) for object_id, joint in OBJECT_JOINTS.items()}
+        self.object_q, self.object_v = self.object_addresses["red"]
         self.arm_ctrl = [actuator_id(self.model, name) for name in JOINT_NAMES]
         self.grip_ctrl = actuator_id(self.model, GRIPPER_JOINT)
         self.tcp = name_id(self.model, mujoco.mjtObj.mjOBJ_BODY, TCP_BODY)
@@ -226,9 +227,13 @@ class Simulation:
             raise ValueError("position must contain three finite values")
         if position[2] < self.settings.table_z + 0.02 - self.settings.object_clearance:
             raise ValueError("object penetrates the table")
-        self.data.qpos[self.object_q:self.object_q + 3] = position
-        self.data.qpos[self.object_q + 3:self.object_q + 7] = quat
-        self.data.qvel[self.object_v:self.object_v + 6] = 0
+        object_id = payload.get("object_id", "red")
+        if object_id not in self.object_addresses:
+            raise ValueError(f"unknown object_id: {object_id}")
+        object_q, object_v = self.object_addresses[object_id]
+        self.data.qpos[object_q:object_q + 3] = position
+        self.data.qpos[object_q + 3:object_q + 7] = quat
+        self.data.qvel[object_v:object_v + 6] = 0
         mujoco.mj_forward(self.model, self.data)
 
     def _finish_timeout(self, results: mp.Queue, operation_id: str) -> None:
@@ -241,13 +246,17 @@ class Simulation:
     def snapshot(self, now: float) -> dict:
         pos, quat = self.tcp_pose("base")
         base_pos, base_quat = self.base_pose()
-        obj = self.data.qpos[self.object_q:self.object_q + 7].copy()
-        obj_pos, obj_quat = transform(obj[:3], obj[3:], "world", "base", base_pos, base_quat)
         target_id = name_id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "tar_plane")
         target_pos, target_quat = transform(self.data.geom_xpos[target_id], np.array([1., 0, 0, 0]), "world", "base", base_pos, base_quat)
         target_half_size = self.model.geom_size[target_id].copy()
-        inside_xy = np.all(np.abs(obj[:2] - self.data.geom_xpos[target_id, :2]) <= target_half_size[:2] + 0.02)
-        on_table = abs(obj[2] - (self.settings.table_z + 0.022)) <= 0.015
+        target = {"frame": "base", "center": target_pos.tolist(), "quaternion": target_quat.tolist(), "half_size": target_half_size.tolist()}
+        objects = {}
+        for object_id, (object_q, _) in self.object_addresses.items():
+            obj = self.data.qpos[object_q:object_q + 7].copy()
+            obj_pos, obj_quat = transform(obj[:3], obj[3:], "world", "base", base_pos, base_quat)
+            inside_xy = np.all(np.abs(obj[:2] - self.data.geom_xpos[target_id, :2]) <= target_half_size[:2] + 0.02)
+            on_table = abs(obj[2] - (self.settings.table_z + 0.022)) <= 0.015
+            objects[object_id] = {"object_id": object_id, "frame": "base", "position": obj_pos.tolist(), "quaternion": obj_quat.tolist(), "in_target": bool(inside_xy and on_table), "target": target}
         ratio = (self.grip_limit[1] - self.data.qpos[self.grip_q]) / (self.grip_limit[1] - self.grip_limit[0])
 
         moving = abs(self.gripper_velocity()) > self.settings.velocity_tolerance
@@ -260,7 +269,8 @@ class Simulation:
             "joints": {"names": JOINT_NAMES, "positions": self.joints().tolist(), "velocities": self.joint_velocity().tolist(), "limits": self.limits.tolist()},
             "pose": {"frame": "base", "position": pos.tolist(), "quaternion": quat.tolist()},
             "gripper": {"raw_position": float(self.data.qpos[self.grip_q]), "opening_ratio": float(np.clip(ratio, 0, 1)), "target": self.controller.hold_grip, "velocity": self.gripper_velocity(), "moving": moving},
-            "object": {"frame": "base", "position": obj_pos.tolist(), "quaternion": obj_quat.tolist(), "in_target": bool(inside_xy and on_table), "target": {"frame": "base", "center": target_pos.tolist(), "quaternion": target_quat.tolist(), "half_size": target_half_size.tolist()}},
+            "object": objects["red"],
+            "objects": objects,
         }
 
     def image(self, now: float) -> dict:

@@ -41,6 +41,57 @@ def test_pose_snapshots_and_object_control_use_base(simulation):
         sim._set_object({"position": [.4, .1, -.1]})
 
 
+def test_multiple_objects_are_independent_and_reset(simulation):
+    sim = simulation
+    initial = sim.snapshot(time.monotonic())["objects"]
+    assert set(initial) == {"red", "orange", "yellow"}
+    for object_id in ("orange", "yellow"):
+        sim._set_object({"object_id": object_id, "position": [.6, 0, .072]})
+        objects = sim.snapshot(time.monotonic())["objects"]
+        np.testing.assert_allclose(objects[object_id]["position"], [.6, 0, .072], atol=1e-12)
+        np.testing.assert_allclose(objects["red"]["position"], initial["red"]["position"])
+        assert objects[object_id]["object_id"] == object_id
+    with pytest.raises(ValueError, match="object_id"):
+        sim._set_object({"object_id": "unknown", "position": [.4, 0, .2]})
+    sim.reset_state()
+    restored = sim.snapshot(time.monotonic())
+    assert restored["object"] == restored["objects"]["red"]
+    assert restored["objects"] == initial
+
+
+def test_left_camera_views_work_area_from_the_side(simulation):
+    sim = simulation
+    camera = sim.model.camera("left_camera").id
+    base_rotation = sim.data.xmat[sim.base].reshape(3, 3)
+    camera_rotation = base_rotation.T @ sim.data.cam_xmat[camera].reshape(3, 3)
+    camera_position = base_rotation.T @ (sim.data.cam_xpos[camera] - sim.data.xpos[sim.base])
+    np.testing.assert_allclose(camera_position, [.55, .55, .35], atol=1e-12)
+    np.testing.assert_allclose(-camera_rotation[:, 2], [0, -.8976676106, -.4406731906], atol=1e-8)
+    assert sim.model.cam_fovy[camera] == 60
+    corners = np.array([[x, y, z] for x in (.48, .62) for y in (-.14, .14) for z in (.05, .16)])
+    local = (corners - camera_position) @ camera_rotation
+    assert np.all(local[:, 2] < 0)
+    projected = local[:, :2] / (-local[:, 2, None] * np.tan(np.deg2rad(30)))
+    assert np.max(np.abs(projected)) < 1
+
+
+def test_opposite_camera_views_work_area_at_45_degrees(simulation):
+    sim = simulation
+    camera = sim.model.camera("opposite_camera").id
+    base_rotation = sim.data.xmat[sim.base].reshape(3, 3)
+    camera_rotation = base_rotation.T @ sim.data.cam_xmat[camera].reshape(3, 3)
+    camera_position = base_rotation.T @ (sim.data.cam_xpos[camera] - sim.data.xpos[sim.base])
+    np.testing.assert_allclose(camera_position, [.939, 0, .439], atol=1e-12)
+    np.testing.assert_allclose(-camera_rotation[:, 2], [-np.sqrt(.5), 0, -np.sqrt(.5)], atol=1e-10)
+    assert sim.model.cam_fovy[camera] == 60
+    # Blocks, target and the grasp height stay in frame after moving closer.
+    corners = np.array([[x, y, z] for x in (.5, .6) for y in (-.12, .12) for z in (.05, .15)])
+    local = (corners - camera_position) @ camera_rotation
+    assert np.all(local[:, 2] < 0)
+    projected = local[:, :2] / (-local[:, 2, None] * np.tan(np.deg2rad(30)))
+    assert np.max(np.abs(projected)) < 1
+
+
 def test_camera_axis_and_rendered_pixel_match_geometry(simulation):
     sim = simulation
     sim.start()
@@ -48,12 +99,12 @@ def test_camera_axis_and_rendered_pixel_match_geometry(simulation):
     tcp_rotation = sim.data.xmat[sim.tcp].reshape(3, 3)
     np.testing.assert_allclose(-camera_rotation[:, 2], tcp_rotation[:, 0], atol=1e-12)
     np.testing.assert_allclose(camera_rotation[:, 1], tcp_rotation[:, 2], atol=1e-12)
-    image = sim.image(time.monotonic())["left_rear"]
+    image = sim.image(time.monotonic())["opposite"]
     u, v = 48, 32
     point = pixel_to_base(image, u, v)
     world_point = rotate_vector(sim.base_pose()[1], point) + sim.base_pose()[0]
     # Compare unprojection to an independent ray cast against scene geometry.
-    origin = sim.data.cam_xpos[sim.model.camera("left_rear_camera").id]
+    origin = sim.data.cam_xpos[sim.model.camera("opposite_camera").id]
     direction = world_point - origin
     distance = np.linalg.norm(direction)
     geom = np.zeros(1, dtype=np.int32)
@@ -118,7 +169,7 @@ def test_api_coordinate_and_pixel_contract(simulation):
             assert client.post(path, json={"position": [0, 0, .2], "frame": "world"}).status_code == 422
         assert client.post("/v1/arm/pose/delta", json={"delta_position": [.01, 0, 0], "delta_rpy": [0, 0, .1]}).status_code == 200
         assert submitted[-1][0] == "pose_delta"
-        params = {"camera": "left_rear", "type": "depth"}
+        params = {"camera": "opposite", "type": "depth"}
         frame_reply = client.get("/v1/camera/image", params=params)
         assert frame_reply.status_code == 200
         epoch, step = int(frame_reply.headers["x-epoch"]), int(frame_reply.headers["x-step"])
@@ -126,11 +177,11 @@ def test_api_coordinate_and_pixel_contract(simulation):
             ("x-tcp-position-base", "tcp_position_base"), ("x-tcp-quaternion-base", "tcp_quaternion_base"),
             ("x-camera-position-tcp", "camera_position_tcp"), ("x-camera-rotation-tcp", "camera_rotation_tcp"),
             ("x-intrinsics", "intrinsics"))}
-        image = images["left_rear"]
+        image = images["opposite"]
         valid = np.argwhere(image["depth"] > 0)
         v, u = map(int, valid[len(valid) // 2])
         expected = pixel_to_base(image, u, v)
-        point_command = {"camera": "left_rear", "pixel": [u, v], "depth_m": float(image["depth"][v, u]) / 1000,
+        point_command = {"camera": "opposite", "pixel": [u, v], "depth_m": float(image["depth"][v, u]) / 1000,
                          **captured, "epoch": epoch, "step": step}
         image_available[0] = False
         reply = client.post("/v1/camera/point", json=point_command)

@@ -65,14 +65,14 @@ def test_queries_actions_and_errors(server):
     import io
     import numpy as np
     from PIL import Image
-    rear_rgb = httpx.get(f"{server}/v1/camera/image?camera=left_rear&type=rgb", timeout=5)
-    rear_depth = httpx.get(f"{server}/v1/camera/image?camera=left_rear&type=depth", timeout=5)
-    assert rear_rgb.status_code == rear_depth.status_code == 200
-    rgb = np.array(Image.open(io.BytesIO(rear_rgb.content)))
-    depth = np.array(Image.open(io.BytesIO(rear_depth.content)))
+    opposite_rgb = httpx.get(f"{server}/v1/camera/image?camera=opposite&type=rgb", timeout=5)
+    opposite_depth = httpx.get(f"{server}/v1/camera/image?camera=opposite&type=depth", timeout=5)
+    assert opposite_rgb.status_code == opposite_depth.status_code == 200
+    rgb = np.array(Image.open(io.BytesIO(opposite_rgb.content)))
+    depth = np.array(Image.open(io.BytesIO(opposite_depth.content)))
     assert rgb.shape == (224, 224, 3)
     assert depth.shape == (224, 224) and depth.max() > 0
-    assert rear_rgb.content != image.content
+    assert opposite_rgb.content != image.content
     assert httpx.get(f"{server}/v1/camera/image?camera=unknown", timeout=5).status_code == 422
     invalid = httpx.post(f"{server}/v1/arm/joints", json={"positions": [9, 0, 0, 0, 0, 0]}, timeout=5)
     assert invalid.status_code == 422 and invalid.json()["error"]["code"] == "INVALID_ARGUMENT"
@@ -109,7 +109,7 @@ def test_tcp_delta_motion_and_pixel_point(server):
         after = client.get("/v1/arm/pose").json()["data"]
         assert np.linalg.norm(np.array(after["position"]) - expected[0]) < .003
         assert quaternion_error(np.array(after["quaternion"]), expected[1]) < .03
-        depth_frame = client.get("/v1/camera/image", params={"camera": "left_rear", "type": "depth"})
+        depth_frame = client.get("/v1/camera/image", params={"camera": "opposite", "type": "depth"})
         depth_image = np.array(Image.open(io.BytesIO(depth_frame.content)))
         v, u = map(int, np.argwhere(depth_image > 0)[0])
         capture = {key: json.loads(base64.urlsafe_b64decode(depth_frame.headers[header])) for header, key in (
@@ -117,11 +117,48 @@ def test_tcp_delta_motion_and_pixel_point(server):
             ("x-camera-position-tcp", "camera_position_tcp"), ("x-camera-rotation-tcp", "camera_rotation_tcp"),
             ("x-intrinsics", "intrinsics"))}
         point = client.post("/v1/camera/point", json={
-            "camera": "left_rear", "pixel": [u, v], "depth_m": float(depth_image[v, u]) / 1000,
+            "camera": "opposite", "pixel": [u, v], "depth_m": float(depth_image[v, u]) / 1000,
             **capture, "epoch": int(depth_frame.headers["x-epoch"]), "step": int(depth_frame.headers["x-step"]),
         })
         assert point.status_code == 200, point.text
         assert point.json()["data"]["frame"] == "base"
+
+
+def test_multiple_object_api_and_cli(server, capsys):
+    import numpy as np
+    from mujoco_robot_cli.cli import main
+
+    with httpx.Client(base_url=server, timeout=20) as client:
+        assert client.post("/v1/environment/reset", json={"settle_s": .5}).status_code == 200
+        initial = client.get("/v1/objects").json()["data"]["objects"]
+        assert set(initial) == {"red", "orange", "yellow"}
+        assert client.get("/v1/capabilities").json()["data"]["objects"] == ["red", "orange", "yellow"]
+        for object_id in ("orange", "yellow"):
+            moved = client.post("/v1/object/pose", json={"object_id": object_id, "position": [.6, 0, .072], "settle_s": .2})
+            assert moved.status_code == 200, moved.text
+            state = moved.json()["data"]["state"]
+            assert set(state["objects"]) == set(initial)
+            assert state["object"] == state["objects"]["red"]
+            pose = client.get("/v1/object/pose", params={"object_id": object_id}).json()["data"]
+            assert pose["object_id"] == object_id
+            assert client.get("/v1/object/in-target", params={"object_id": object_id}).json()["data"]["in_target"]
+            # Restore before placing the next block at the same target.
+            assert client.post("/v1/environment/reset", json={"settle_s": .5}).status_code == 200
+        for path in ("/v1/object/pose", "/v1/object/in-target"):
+            assert client.get(path, params={"object_id": "unknown"}).status_code == 422
+        assert client.post("/v1/object/pose", json={"object_id": "unknown", "position": [.5, 0, .1]}).status_code == 422
+        assert client.get("/v1/object/pose").json()["data"]["object_id"] == "red"
+        restored = client.get("/v1/objects").json()["data"]["objects"]
+        for object_id in initial:
+            np.testing.assert_allclose(restored[object_id]["position"], initial[object_id]["position"], atol=.002)
+    assert main(["--server", server, "object", "get", "--object-id", "orange"]) == 0
+    assert json.loads(capsys.readouterr().out)["data"]["object_id"] == "orange"
+    assert main(["--server", server, "object", "list"]) == 0
+    assert set(json.loads(capsys.readouterr().out)["data"]["objects"]) == set(initial)
+    assert main(["--server", server, "object", "set", "--object-id", "yellow", "--position", ".5", "-.12", ".1"]) == 0
+    assert json.loads(capsys.readouterr().out)["ok"]
+    assert main(["--server", server, "object", "in-target", "--object-id", "yellow"]) == 0
+    assert json.loads(capsys.readouterr().out)["data"]["object_id"] == "yellow"
 
 
 def test_cli_disconnected_server():

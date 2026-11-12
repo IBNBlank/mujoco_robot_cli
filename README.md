@@ -25,7 +25,7 @@ mujoco_cli joints get
 mujoco_server --config configs/default.yaml --headless
 ```
 
-场景包含机械臂、手部相机、桌面、绿色目标区和红色物块。服务进程持续维护唯一仿真；每次 CLI 调用结束即退出，不会重置或关闭仿真。
+场景包含机械臂、手部相机、桌面、绿色目标区和红色、橙色、黄色三个物块。TCP（`ee_frame`）位置对标夹爪闭合时的指尖：原点在两指尖之间，`+X` 指向指尖前方。夹爪张开后指尖离开该点，TCP 原点不随开合变化。通过 `mujoco_cli object list` 查询全部物块，使用 `object get|set|in-target --object-id red|orange|yellow` 选择物块；省略标识默认操作红色块。服务进程持续维护唯一仿真；每次 CLI 调用结束即退出，不会重置或关闭仿真。
 
 接口、相机校正和实测限制分别见：
 

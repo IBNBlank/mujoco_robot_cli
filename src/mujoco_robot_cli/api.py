@@ -13,8 +13,8 @@ from fastapi.responses import JSONResponse, Response
 from PIL import Image
 
 from .config import Settings
-from .schemas import DeltaPoseCommand, Envelope, ErrorBody, GripperCommand, JointCommand, ObjectCommand, PixelPointCommand, PoseCommand, ResetCommand
-from .simulation.scene import CAMERAS, pixel_to_base_from_capture
+from .schemas import DeltaPoseCommand, Envelope, ErrorBody, GripperCommand, JointCommand, ObjectCommand, ObjectId, PixelPointCommand, PoseCommand, ResetCommand
+from .simulation.scene import CAMERAS, FIXED_CAMERAS, OBJECT_JOINTS, pixel_to_base_from_capture
 from .simulation.worker import WorkerClient
 
 
@@ -69,7 +69,7 @@ def create_app(settings: Settings, worker: WorkerClient | None = None) -> FastAP
 
     @app.get("/v1/capabilities")
     def capabilities(request: Request):
-        return ok(request, settings.model_dump() | {"protocol": "0.1.0", "robot": "archer_y6", "tcp": "ee_frame", "quaternion": "wxyz", "pose_frame": "base", "base_link": "base_link", "delta_frame": "tcp", "cameras": list(CAMERAS)})
+        return ok(request, settings.model_dump() | {"protocol": "0.1.0", "robot": "archer_y6", "tcp": "ee_frame", "quaternion": "wxyz", "pose_frame": "base", "base_link": "base_link", "delta_frame": "tcp", "cameras": list(CAMERAS), "objects": list(OBJECT_JOINTS)})
 
     @app.get("/v1/arm/joints")
     def get_joints(request: Request):
@@ -104,18 +104,23 @@ def create_app(settings: Settings, worker: WorkerClient | None = None) -> FastAP
     def set_gripper(command: GripperCommand, request: Request):
         return action(app, request, "gripper", command.model_dump(), command.timeout_s)
 
+    @app.get("/v1/objects")
+    def get_objects(request: Request):
+        snap = fresh(app.state.worker, settings)
+        return ok(request, {"objects": snap["objects"]} | meta(snap))
+
     @app.get("/v1/object/pose")
-    def get_object(request: Request, frame: str = "base"):
+    def get_object(request: Request, frame: str = "base", object_id: ObjectId = "red"):
         if frame != "base":
             raise ServiceError("INVALID_ARGUMENT", "pose frame must be base", 422)
         snap = fresh(app.state.worker, settings)
-        return ok(request, object_view(snap) | meta(snap))
+        return ok(request, object_view(snap, object_id) | meta(snap))
 
     @app.get("/v1/object/in-target")
-    def object_in_target(request: Request):
+    def object_in_target(request: Request, object_id: ObjectId = "red"):
         snap = fresh(app.state.worker, settings)
-        view = object_view(snap)
-        return ok(request, {"frame": "base", "in_target": view["in_target"], "position": view["position"], "target": view["target"]} | meta(snap))
+        view = object_view(snap, object_id)
+        return ok(request, {"object_id": object_id, "frame": "base", "in_target": view["in_target"], "position": view["position"], "target": view["target"]} | meta(snap))
 
     @app.post("/v1/object/pose")
     def set_object(command: ObjectCommand, request: Request):
@@ -143,7 +148,7 @@ def create_app(settings: Settings, worker: WorkerClient | None = None) -> FastAP
             image = camera_image(command.camera)
             source = image
             payload.update({key: image[key] for key in ("camera_position_tcp", "camera_rotation_tcp", "intrinsics")})
-            if command.camera == "left_rear":
+            if command.camera in FIXED_CAMERAS:
                 # Its transform relative to TCP changes as the arm moves. Use the
                 # matching capture pose to recover the fixed camera's base pose.
                 payload.update({key: image[key] for key in ("tcp_position_base", "tcp_quaternion_base")})
@@ -198,8 +203,8 @@ def meta(snap: dict) -> dict:
     return {key: snap[key] for key in ("epoch", "step", "sim_time_s", "captured_at_ns")}
 
 
-def object_view(snap: dict) -> dict:
-    return snap["object"].copy()
+def object_view(snap: dict, object_id: ObjectId = "red") -> dict:
+    return snap["objects"][object_id].copy()
 
 
 def gripper_view(snap: dict) -> dict:

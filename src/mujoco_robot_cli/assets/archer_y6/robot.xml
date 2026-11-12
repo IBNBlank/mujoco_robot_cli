@@ -3,6 +3,17 @@
         <inertial pos="-0.001 0 0.031" quat="0 0.707107 0 0.707107" mass="0.748" diaginertia="0.0008 0.0007 0.0006"/>
         <geom type="mesh" rgba="1 1 1 1" mesh="arm_base_link"/>
 
+        <body name="opposite_camera_mount" pos="0.939 0 0.439" xyaxes="0 1 0 -0.7071067812 0 0.7071067812">
+            <!-- Same 45 degree view, moved closer along the optical axis; housing sits behind the lens. -->
+            <camera name="opposite_camera" fovy="60"/>
+            <geom name="opposite_camera_housing" type="box" pos="0 0 0.02" size="0.028 0.018 0.018" rgba="0.02 0.02 0.02 1" contype="0" conaffinity="0" mass="0"/>
+        </body>
+        <body name="left_camera_mount" pos="0.55 0.55 0.35" xyaxes="-1 0 0 0 -0.4406731906 0.8976676106">
+            <!-- Fixed on the robot's left, looking at the work-area center; housing sits behind the lens. -->
+            <camera name="left_camera" fovy="60"/>
+            <geom name="left_camera_housing" type="box" pos="0 0 0.02" size="0.028 0.018 0.018" rgba="0.02 0.02 0.02 1" contype="0" conaffinity="0" mass="0"/>
+        </body>
+
         # link 1
         <body name="link_1" pos="0 0 0.06655">
             <inertial pos="0.006 -0.0013 0.0209" quat="0.707107 0.707107 0 0" mass="0.2289" diaginertia="0.0004 0.0004 0.0002"/>
@@ -41,8 +52,10 @@
                                 <body name="grip_base_link" pos="0.0 0.0 0.0" quat="0.707107 0 -0.707107 0 ">
                                     <inertial pos="0.0 0.0 0.0" quat="1.0 0.0 0.0 0.0" mass="0.0" diaginertia="0.0 0.0 0.0"/>
                                     <geom type="mesh" rgba="1 1 1 1" mesh="grip_base_link"/>
-                                    <geom pos="0.04 0 0.12" quat="0.6830127 0.6830127 0.1830127 -0.1830127" type="mesh" rgba="0.1 0.1 0.1 1" mesh="camera_link" />
-                                    <camera name="end_camera" pos="0.066 0 0.105" xyaxes="0 -1 0 0 0 1" fovy="50"/>
+                                    <!-- Floating camera housing behind the optical center; visual only. -->
+                                    <!-- Lowered on TCP +Z only; optical axis stays parallel to TCP +X so closed fingertips enter the frame. -->
+                                    <geom name="end_camera_housing" pos="0.046 0 0.040" type="box" size="0.018 0.028 0.018" rgba="0.02 0.02 0.02 1" contype="0" conaffinity="0" mass="0"/>
+                                    <camera name="end_camera" pos="0.066 0 0.040" xyaxes="0 -1 0 0 0 1" fovy="50"/>
 
                                     # ee frame
                                     <body name="ee_frame" pos="0.1870 0.0 0.0" quat="1 0 0 0">

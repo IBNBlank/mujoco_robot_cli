@@ -12,6 +12,5 @@
     <mesh name="grip_right_helper_link" file="grip_right_helper_link.STL"/>
     <mesh name="grip_right_link_1" file="grip_right_link_1.STL"/>
     <mesh name="grip_right_link_2" file="grip_right_link_2.STL"/>
-    <mesh name="camera_link" file="camera_link.STL"/>
     <mesh name="table_link" file="table_link.STL" scale="0.001 0.001 0.001"/>
 </mujocoinclude>

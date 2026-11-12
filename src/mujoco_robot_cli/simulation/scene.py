@@ -8,11 +8,13 @@ import numpy as np
 
 JOINT_NAMES = [f"joint_{i}" for i in range(1, 7)]
 GRIPPER_JOINT = "grip_left_joint_1"
-OBJECT_JOINT = "red_box_joint"
+OBJECT_JOINTS = {color: f"{color}_box_joint" for color in ("red", "orange", "yellow")}
+OBJECT_JOINT = OBJECT_JOINTS["red"]
 TCP_BODY = "ee_frame"
 BASE_BODY = "base_link"
 CAMERA_NAME = "end_camera"
-CAMERAS = {"end": CAMERA_NAME, "left_rear": "left_rear_camera"}
+CAMERAS = {"end": CAMERA_NAME, "opposite": "opposite_camera", "left": "left_camera"}
+FIXED_CAMERAS = frozenset({"opposite", "left"})
 # Reference driver exposes the gripper joint scaled by this ratio.
 GRIPPER_RATIO = 1.33 / 1.52
 

@@ -1,5 +1,21 @@
 {
   "properties": {
+    "object_id": {
+      "default": "red",
+      "enum": [
+        "red",
+        "orange",
+        "yellow"
+      ],
+      "title": "Object Id",
+      "type": "string"
+    },
+    "frame": {
+      "const": "base",
+      "default": "base",
+      "title": "Frame",
+      "type": "string"
+    },
     "position": {
       "items": {
         "type": "number"

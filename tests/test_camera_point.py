@@ -29,7 +29,7 @@ class CameraWorker:
                 "intrinsics": {"fx": 100., "fy": 100., "cx": 50., "cy": 40., "width": 100, "height": 80}}
 
 
-@pytest.mark.parametrize("camera", ["end", "left_rear"])
+@pytest.mark.parametrize("camera", ["end", "opposite", "left"])
 def test_current_and_explicit_pose(camera):
     worker = CameraWorker()
     command = {"camera": camera, "pixel": [60, 60], "depth_m": 2.}
@@ -66,7 +66,7 @@ def test_cli_point_minimal_and_json(monkeypatch, capsys):
         sent.append((method, path, payload))
         return {"ok": True}
     monkeypatch.setattr(RobotClient, "request", request)
-    assert main(["image", "point", "--camera", "left_rear", "--pixel", "10", "20", "--depth-m", "0.5"]) == 0
-    assert sent[-1][2] == {"camera": "left_rear", "pixel": [10, 20], "depth_m": .5}
+    assert main(["image", "point", "--camera", "opposite", "--pixel", "10", "20", "--depth-m", "0.5"]) == 0
+    assert sent[-1][2] == {"camera": "opposite", "pixel": [10, 20], "depth_m": .5}
     assert main(["--request-json", '{"camera":"end","pixel":[1,2],"depth_m":1}', "image", "point"]) == 0
     assert sent[-1][2] == {"camera": "end", "pixel": [1, 2], "depth_m": 1}

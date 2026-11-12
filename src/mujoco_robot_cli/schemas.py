@@ -48,7 +48,11 @@ class GripperCommand(BaseModel):
         return self
 
 
+ObjectId = Literal["red", "orange", "yellow"]
+
+
 class ObjectCommand(BaseModel):
+    object_id: ObjectId = "red"
     frame: Literal["base"] = "base"
     position: list[FiniteFloat] = Field(min_length=3, max_length=3)
     quaternion: list[float] | None = Field(default=None, min_length=4, max_length=4)
@@ -66,7 +70,7 @@ class CameraIntrinsics(BaseModel):
 
 
 class PixelPointCommand(BaseModel):
-    camera: Literal["end", "left_rear"]
+    camera: Literal["end", "opposite", "left"]
     pixel: list[StrictInt] = Field(min_length=2, max_length=2)
     depth_m: FiniteFloat = Field(gt=0, lt=65.535)
     tcp_position_base: list[FiniteFloat] | None = Field(default=None, min_length=3, max_length=3)

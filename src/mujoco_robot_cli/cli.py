@@ -35,10 +35,11 @@ def main(argv: list[str] | None = None) -> int:
         item.add_argument("--camera-rotation-tcp", nargs=9, type=float)
         item.add_argument("--intrinsics", nargs=6, type=float, metavar=("FX", "FY", "CX", "CY", "WIDTH", "HEIGHT"))
         item.add_argument("--opening-ratio", type=float)
-        item.add_argument("--camera", choices=["end", "left_rear"], default="end")
+        item.add_argument("--camera", choices=["end", "opposite", "left"], default="end")
         item.add_argument("--type", default="rgb")
         item.add_argument("--output")
         item.add_argument("--base64", action="store_true")
+        item.add_argument("--object-id", choices=["red", "orange", "yellow"], default="red")
         item.add_argument("--settle", type=float, default=0)
     args = parser.parse_args(argv)
     client = RobotClient(args.server, args.timeout + 5, args.request_id)
@@ -102,12 +103,14 @@ def dispatch(client: RobotClient, args, payload: dict | None) -> dict:
         if args.base64:
             saved["base64"] = base64.b64encode(response["content"]).decode()
         return {"ok": True, "data": saved}
+    if args.command == "object" and args.operation == "list":
+        return client.request("GET", "/v1/objects")
     if args.command == "object" and args.operation == "get":
-        return client.request("GET", "/v1/object/pose")
+        return client.request("GET", "/v1/object/pose", params={"object_id": args.object_id})
     if args.command == "object" and args.operation == "in-target":
-        return client.request("GET", "/v1/object/in-target")
+        return client.request("GET", "/v1/object/in-target", params={"object_id": args.object_id})
     if args.command == "object":
-        data = payload or ObjectCommand(position=required(args.position, "position"), quaternion=args.quaternion, settle_s=args.settle, timeout_s=args.timeout).model_dump()
+        data = payload or ObjectCommand(object_id=args.object_id, position=required(args.position, "position"), quaternion=args.quaternion, settle_s=args.settle, timeout_s=args.timeout).model_dump()
         return client.request("POST", "/v1/object/pose", data)
     if args.command == "environment":
         data = payload or ResetCommand(settle_s=args.settle, timeout_s=args.timeout).model_dump()
